@@ -1,0 +1,43 @@
+name: Hourly Weather Update
+
+on:
+  schedule:
+    # 1時間ごとに実行 (毎時15分ごろ)
+    - cron: '15 * * * *'
+  workflow_dispatch: # 手動実行ボタンも有効にする
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Install wgrib2
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wgrib2
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+
+    - name: Run update script
+      run: |
+        python cloud_update.py
+
+    - name: Commit and push if changed
+      run: |
+        git config --global user.name 'WeatherBot'
+        git config --global user.email 'bot@example.com'
+        git add weather_data.json
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto update weather data" && git push)
