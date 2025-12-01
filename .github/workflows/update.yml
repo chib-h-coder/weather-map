@@ -11,7 +11,8 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # 【重要】最新版(latest)ではなく、wgrib2が使える22.04を指定します
+    runs-on: ubuntu-22.04
 
     steps:
     - name: Checkout code
@@ -19,6 +20,7 @@ jobs:
 
     - name: Install wgrib2
       run: |
+        sudo add-apt-repository universe
         sudo apt-get update
         sudo apt-get install -y wgrib2
 
