@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Weather Map with Analytics</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body { margin: 0; padding: 0; font-family: sans-serif; -webkit-text-size-adjust: 100%; background: #222; }
+        #map { height: 100vh; width: 100%; z-index: 1; background: #222; }
+
+        /* コントロールパネル */
+        #controls {
+            position: absolute; bottom: 20px; left: 10px; right: 10px;
+            background: rgba(30, 30, 30, 0.9); color: white;
+            padding: 15px; border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            z-index: 1000; display: flex; flex-direction: column; gap: 5px;
+        }
+        .control-row { display: flex; align-items: center; gap: 10px; }
+        
+        #play-btn {
+            width: 40px; height: 40px; background: #007bff; color: white; border: none;
+            border-radius: 50%; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+        }
+        input[type=range] { flex-grow: 1; height: 25px; cursor: pointer; }
+        #time-display { font-size: 16px; font-weight: bold; margin-bottom: 5px; text-align: center;}
+
+        /* モード切替 */
+        #mode-switcher {
+            position: absolute; top: 15px; left: 50%; transform: translateX(-50%);
+            background: rgba(30,30,30,0.9); padding: 8px 15px;
+            border-radius: 25px; box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            z-index: 1000; white-space: nowrap; display: flex; gap: 15px; color: white;
+        }
+        .radio-label { cursor: pointer; font-weight: bold; font-size: 14px; display: flex; align-items: center; gap: 5px; }
+        input[type=radio] { transform: scale(1.3); }
+
+        /* GPSボタン */
+        #gps-btn {
+            position: absolute; bottom: 160px; right: 20px;
+            width: 50px; height: 50px; background: #444; color: white;
+            border-radius: 50%; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            z-index: 1000; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 24px;
+        }
+
+        /* 凡例 */
+        .legend { line-height: 16px; color: #ddd; background: rgba(30,30,30,0.8); padding: 8px; border-radius: 8px; font-size: 12px; }
+        .legend i { width: 15px; height: 15px; float: left; margin-right: 6px; opacity: 0.8; }
+        .wind-arrow { font-size: 18px; line-height: 18px; text-align: center; font-weight: bold; text-shadow: 0 0 2px black; }
+
+        /* ポップアップ内のグラフ用スタイル */
+        .leaflet-popup-content-wrapper { background: rgba(30,30,30,0.95); color: white; border-radius: 10px; }
+        .leaflet-popup-tip { background: rgba(30,30,30,0.95); }
+        .chart-container { width: 280px; height: 180px; position: relative; }
+    </style>
+</head>
+<body>
+
+    <div id="map"></div>
+
+    <div id="mode-switcher">
+        <label class="radio-label"><input type="radio" name="mode" value="rain" checked onchange="changeMode('rain')"> ☔ 雨</label>
+        <label class="radio-label"><input type="radio" name="mode" value="temp" onchange="changeMode('temp')"> 🌡️ 気温</label>
+        <label class="radio-label"><input type="radio" name="mode" value="wind" onchange="changeMode('wind')"> 🍃 風</label>
+    </div>
+
+    <div id="gps-btn" onclick="getLocation()">📍</div>
+
+    <div id="controls">
+        <div id="time-display">読み込み中...</div>
+        <div class="control-row">
+            <button id="play-btn" onclick="togglePlay()">▶</button>
+            <input type="range" id="time-slider" min="0" max="0" value="0" step="1">
+        </div>
+    </div>
+
+    <script>
+        // ★初期位置（自分の街の座標に合わせてください）★
+        var map = L.map('map', {zoomControl: false}).setView([35.689, 139.692], 9);
+        L.control.zoom({ position: 'topright' }).addTo(map);
+        
+        // ダークモード地図
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OSM &copy; CARTO', subdomains: 'abcd', maxZoom: 20
+        }).addTo(map);
+
+        // --- 色関数 ---
+        function getRainColor(d) { return d>50?'#800080': d>30?'#FF0000': d>20?'#FF8000': d>10?'#FFFF00': d>5?'#0000FF': d>1?'#00BFFF':'#E0FFFF'; }
+        function getTempColor(d) { return d>30?'#FF0000': d>25?'#FF8000': d>20?'#FFFF00': d>15?'#00FF00': d>10?'#00FFFF': d>0?'#0000FF':'#000080'; }
+        function getWindColor(d) { return d>20?'#800080': d>15?'#FF0000': d>10?'#FF8000': d>5?'#00AA00': '#0000FF'; }
+
+        // --- GPS ---
+        function getLocation() { map.locate({setView: true, maxZoom: 10}); }
+        map.on('locationerror', function(e) { alert("現在地取得エラー: https接続が必要です"); });
+
+        // --- 凡例 ---
+        var legend = L.control({position: 'topleft'});
+        legend.onAdd = function (map) { return L.DomUtil.create('div', 'legend'); };
+        legend.addTo(map);
+
+        function updateLegend(mode) {
+            var div = document.querySelector('.legend');
+            if(mode === 'rain'){
+                div.innerHTML = '<strong>降水(mm)</strong><br>';
+                [0,1,5,10,20,30].forEach(g => div.innerHTML += `<i style="background:${getRainColor(g+1)}"></i>${g}<br>`);
+            } else if(mode === 'temp'){
+                div.innerHTML = '<strong>気温(℃)</strong><br>';
+                [0,10,20,30].forEach(g => div.innerHTML += `<i style="background:${getTempColor(g+1)}"></i>${g}<br>`);
+            } else {
+                div.innerHTML = '<strong>風速(m/s)</strong><br>';
+                [0,5,10,15].forEach(g => div.innerHTML += `<i style="background:${getWindColor(g+1)}"></i>${g}<br>`);
+            }
+        }
+
+        // --- データ管理 ---
+        var currentLayerGroup = L.layerGroup().addTo(map);
+        var globalData = null;
+        var currentMode = 'rain';
+        var isPlaying = false;
+        var playInterval = null;
+
+        fetch('./weather_data.json').then(r => r.json()).then(data => {
+            globalData = data;
+            var slider = document.getElementById('time-slider');
+            slider.max = data.times.length - 1;
+            
+            slider.addEventListener('input', function() { 
+                stopPlay();
+                updateMap(this.value); 
+            });
+            
+            updateLegend('rain');
+            updateMap(0);
+        });
+
+        // --- クリックしてグラフを表示する処理 ---
+        map.on('click', function(e) {
+            if (!globalData) return;
+            
+            var clickedLat = e.latlng.lat;
+            var clickedLon = e.latlng.lng;
+            
+            // グラフ用のデータを集める
+            var labels = [];
+            var rainData = [];
+            var tempData = [];
+
+            // すべての時間ステップをループして、クリック位置に最も近いデータを探す
+            globalData.times.forEach(time => {
+                // 時刻ラベル作成 (例: 12:00)
+                var label = time.substring(8,10) + ":00";
+                labels.push(label);
+
+                var dataset = globalData.datasets[time];
+
+                // 雨データの検索
+                var nearestRain = 0;
+                var minDistRain = 999;
+                if (dataset.rain) {
+                    dataset.rain.forEach(p => {
+                        var dist = (p[0]-clickedLat)**2 + (p[1]-clickedLon)**2;
+                        if (dist < minDistRain) { minDistRain = dist; nearestRain = p[2]; }
+                    });
+                }
+                // 遠すぎる場合(データなし)は0にする
+                if (minDistRain > 0.1) nearestRain = 0;
+                rainData.push(nearestRain);
+
+                // 気温データの検索
+                var nearestTemp = null;
+                var minDistTemp = 999;
+                if (dataset.temp) {
+                    dataset.temp.forEach(p => {
+                        var dist = (p[0]-clickedLat)**2 + (p[1]-clickedLon)**2;
+                        if (dist < minDistTemp) { minDistTemp = dist; nearestTemp = p[2]; }
+                    });
+                }
+                tempData.push(nearestTemp);
+            });
+
+            // ポップアップを表示
+            var popupContent = `<div class="chart-container"><canvas id="weatherChart"></canvas></div>`;
+            var popup = L.popup()
+                .setLatLng(e.latlng)
+                .setContent(popupContent)
+                .openOn(map);
+
+            // ポップアップが開いた後にグラフを描画
+            setTimeout(() => {
+                var ctx = document.getElementById('weatherChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            {
+                                type: 'line',
+                                label: '気温(℃)',
+                                data: tempData,
+                                borderColor: '#ff9f40',
+                                borderWidth: 2,
+                                yAxisID: 'y1',
+                                pointRadius: 1
+                            },
+                            {
+                                type: 'bar',
+                                label: '雨量(mm)',
+                                data: rainData,
+                                backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                                yAxisID: 'y2'
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: { mode: 'index', intersect: false },
+                        scales: {
+                            x: { ticks: { color: 'white', maxTicksLimit: 6 } },
+                            y1: { type: 'linear', position: 'left', ticks: { color: '#ff9f40' }, grid: { display: false } },
+                            y2: { type: 'linear', position: 'right', ticks: { color: '#36a2eb' }, grid: { color: '#444' }, min: 0 }
+                        },
+                        plugins: {
+                            legend: { labels: { color: 'white' } }
+                        }
+                    }
+                });
+            }, 100);
+        });
+
+        // --- その他の関数 ---
+        function changeMode(mode) {
+            currentMode = mode;
+            updateLegend(mode);
+            updateMap(document.getElementById('time-slider').value);
+        }
+
+        function togglePlay() { isPlaying ? stopPlay() : startPlay(); }
+        function startPlay() {
+            if (!globalData) return;
+            isPlaying = true;
+            document.getElementById('play-btn').innerText = "■";
+            playInterval = setInterval(function() {
+                var slider = document.getElementById('time-slider');
+                var nextVal = parseInt(slider.value) + 1;
+                if (nextVal > slider.max) nextVal = 0;
+                slider.value = nextVal;
+                updateMap(nextVal);
+            }, 500);
+        }
+        function stopPlay() {
+            isPlaying = false;
+            document.getElementById('play-btn').innerText = "▶";
+            clearInterval(playInterval);
+        }
+
+        function updateMap(index) {
+            if (!globalData) return;
+            var timeStr = globalData.times[index];
+            var formattedTime = timeStr.substring(4,6) + "/" + timeStr.substring(6,8) + " " + timeStr.substring(8,10) + ":00";
+            document.getElementById('time-display').innerText = formattedTime + " の予報";
+            
+            var dataset = globalData.datasets[timeStr];
+            currentLayerGroup.clearLayers();
+
+            if (currentMode === 'wind') {
+                dataset.wind.forEach(p => {
+                    var iconHtml = `<div style="transform: rotate(${90 - p[3]}deg); color: ${getWindColor(p[2])}">➤</div>`;
+                    var icon = L.divIcon({ className: 'wind-arrow', html: iconHtml, iconSize: [20, 20], iconAnchor: [10, 10] });
+                    L.marker([p[0], p[1]], {icon: icon}).addTo(currentLayerGroup);
+                });
+            } else {
+                var points = (currentMode === 'rain') ? dataset.rain : dataset.temp;
+                var colorFunc = (currentMode === 'rain') ? getRainColor : getTempColor;
+                points.forEach(p => {
+                    L.circleMarker([p[0], p[1]], {
+                        radius: 3, fillColor: colorFunc(p[2]), color: "transparent", fillOpacity: 0.7
+                    }).addTo(currentLayerGroup);
+                });
+            }
+        }
+    </script>
+</body>
+</html>
