@@ -3,7 +3,7 @@ name: Hourly Weather Update
 on:
   schedule:
     # 1時間ごとに実行 (毎時15分ごろ)
-    - cron: '15 * * * *'
+    - cron: '23 * * * *'
   workflow_dispatch: # 手動実行ボタンも有効にする
 
 permissions:
